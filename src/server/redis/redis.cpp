@@ -113,7 +113,7 @@ bool Redis::unsubscribe(int channel)
 void Redis::observer_channel_message()
 {
     redisReply *reply = nullptr;
-    while (REDIS_OK == redisGetReply(this->_subcribe_context, (void **)&reply))
+    while (reply != nullptr && REDIS_OK == redisGetReply(this->_subcribe_context, (void **)&reply))
     {
         // 订阅收到的消息是一个带三元素的数组
         if (reply != nullptr && reply->element[2] != nullptr && reply->element[2]->str != nullptr)
