@@ -113,16 +113,23 @@ bool Redis::unsubscribe(int channel)
 void Redis::observer_channel_message()
 {
     redisReply *reply = nullptr;
-    while (reply != nullptr && REDIS_OK == redisGetReply(this->_subcribe_context, (void **)&reply))
+    while (REDIS_OK == redisGetReply(this->_subcribe_context, (void **)&reply))
     {
-        // 订阅收到的消息是一个带三元素的数组
-        if (reply != nullptr && reply->element[2] != nullptr && reply->element[2]->str != nullptr)
+        // 确保reply是一个有效的数组
+        if (reply != nullptr && reply->type == REDIS_REPLY_ARRAY && reply->elements > 2)
         {
-            // 给业务层上报通道上发生的消息
-            _notify_message_handler(atoi(reply->element[1]->str) , reply->element[2]->str);
+            // 确保reply的第二和第三个元素不为空
+            if (reply->element[1] != nullptr && reply->element[2] != nullptr)
+            {
+                // 确保这两个元素都是字符串类型
+                if (reply->element[1]->type == REDIS_REPLY_STRING && reply->element[2]->type == REDIS_REPLY_STRING)
+                {
+                    // 给业务层上报通道上发生的消息
+                    _notify_message_handler(atoi(reply->element[1]->str), reply->element[2]->str);
+                }
+            }
         }
-
-        freeReplyObject(reply);
+        freeReplyObject(reply); // 正确地释放reply对象
     }
 
     cerr << ">>>>>>>>>>>>> observer_channel_message quit <<<<<<<<<<<<<" << endl;
