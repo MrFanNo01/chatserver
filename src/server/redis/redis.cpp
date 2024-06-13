@@ -1,5 +1,6 @@
 #include "redis.hpp"
 #include <iostream>
+#include <muduo/base/Logging.h>
 using namespace std;
 
 Redis::Redis()
@@ -23,16 +24,16 @@ Redis::~Redis()
 bool Redis::connect()
 {
     // 负责publish发布消息的上下文连接
-    _publish_context = redisConnect("127.0.0.1", 6379);
-    if (nullptr == _publish_context)
+    this->_publish_context = redisConnect("127.0.0.1", 6379);
+    if (nullptr == this->_publish_context)
     {
         cerr << "connect redis failed!" << endl;
         return false;
     }
 
     // 负责subscribe订阅消息的上下文连接
-    _subcribe_context = redisConnect("127.0.0.1", 6379);
-    if (nullptr == _subcribe_context)
+    this->_subcribe_context = redisConnect("127.0.0.1", 6379);
+    if (nullptr == this->_subcribe_context)
     {
         cerr << "connect redis failed!" << endl;
         return false;
@@ -63,29 +64,26 @@ bool Redis::publish(int channel, string message)
 }
 
 // 向redis指定的通道subscribe订阅消息
-bool Redis::subscribe(int channel)
+// 订阅通道
+void Redis::subscribe(int channel)
 {
-    // SUBSCRIBE命令本身会造成线程阻塞等待通道里面发生消息，这里只做订阅通道，不接收通道消息
-    // 通道消息的接收专门在observer_channel_message函数中的独立线程中进行
-    // 只负责发送命令，不阻塞接收redis server响应消息，否则和notifyMsg线程抢占响应资源
-    if (REDIS_ERR == redisAppendCommand(this->_subcribe_context, "SUBSCRIBE %d", channel))
-    {
-        cerr << "subscribe command failed!" << endl;
-        return false;
-    }
-    // redisBufferWrite可以循环发送缓冲区，直到缓冲区数据发送完毕（done被置为1）
-    int done = 0;
-    while (!done)
-    {
-        if (REDIS_ERR == redisBufferWrite(this->_subcribe_context, &done))
-        {
-            cerr << "subscribe command failed!" << endl;
-            return false;
-        }
-    }
-    // redisGetReply
-
-    return true;
+	// 只负责发送命令，不阻塞接收redis server响应消息，否则和notifyMsg线程抢占响应资源
+	if (REDIS_ERR == redisAppendCommand(this->_subcribe_context, "SUBSCRIBE %d", channel))
+	{
+		LOG_ERROR << "subscribe [" << channel << "] error!";
+		return;
+	}
+	// redisBufferWrite可以循环发送缓冲区，直到缓冲区数据发送完毕（done被置为1）
+	int done = 0;
+	while (!done) 
+	{
+		if (REDIS_ERR == redisBufferWrite(this->_subcribe_context, &done))
+		{
+			LOG_ERROR << "subscribe [" << channel << "] error!";
+			return;
+		}
+	}
+	LOG_INFO << "subscribe [" << channel << "] success!";
 }
 
 // 向redis指定的通道unsubscribe取消订阅消息
@@ -113,24 +111,17 @@ bool Redis::unsubscribe(int channel)
 void Redis::observer_channel_message()
 {
     redisReply *reply = nullptr;
-    while (REDIS_OK == redisGetReply(this->_subcribe_context, (void **)&reply))
+    while (REDIS_OK == redisGetReply(this->_publish_context, (void **)&reply))
     {
-        // 确保reply是一个有效的数组
-        if (reply != nullptr && reply->type == REDIS_REPLY_ARRAY && reply->elements > 2)
+        std::cerr << "reply->type: " << reply->type << ", elements: " << reply->elements << std::endl;
+        // 订阅收到的消息是一个带三元素的数组
+        if (reply != nullptr && reply->elements > 2 && reply->element[2] != nullptr && reply->element[2]->str != nullptr)
         {
-            // 确保reply的第二和第三个元素不为空
-            if (reply->element[1] != nullptr && reply->element[2] != nullptr)
-            {
-                // 确保这两个元素都是字符串类型
-                if (reply->element[1]->type == REDIS_REPLY_STRING && reply->element[2]->type == REDIS_REPLY_STRING)
-                {
-                    // 给业务层上报通道上发生的消息
-                    _notify_message_handler(atoi(reply->element[1]->str), reply->element[2]->str);
-                }
-            }
+            // 给业务层上报通道上发生的消息
+            _notify_message_handler(atoi(reply->element[1]->str) , reply->element[0]->str);
         }
-        freeReplyObject(reply); // 正确地释放reply对象
     }
+    freeReplyObject(reply);
 
     cerr << ">>>>>>>>>>>>> observer_channel_message quit <<<<<<<<<<<<<" << endl;
 }
